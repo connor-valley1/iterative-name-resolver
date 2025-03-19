@@ -1,0 +1,181 @@
+"""
+There are 13 root servers defined at https://www.iana.org/domains/root/servers
+"""
+
+"""
+  RFC 1035 Section 4.1 Format
+  
+  The top level format of DNS message is divided into five sections:
+  1. Header
+  2. Question
+  3. Answer
+  4. Authority
+  5. Additional
+  """
+
+  # WARNING: 
+  # Neither swap the of order following FOUR for-loops
+  # Nor comment out any of them
+
+# The following function calls are FAILED attempts to use Google Public DNS
+  # (1) to get name servers which manages gvsu.edu
+  # (2) to resolve the IP address of www.gvsu.edu
+  get_dns_record(sock, "gvsu.edu", "8.8.8.8", "NS")      # (1)
+  get_dns_record(sock, "www.gvsu.edu", "8.8.8.8", "A")   # (2)
+
+
+
+SOMEWHAT WORKING FUNCTION:
+def resolve_ns(answers, name_servers, additional, name):
+  """Iterative resolution through NS records"""
+  for ns in name_servers:
+    print(f"Trying TLD {ns}...")
+    answers, name_servers, additional = get_dns_record(sock, name, ns, "NS")
+    for ns in name_servers:
+      print(f"Trying name server {ns} for domain {name}...")
+      answers, name_servers, additional = get_dns_record(sock, name, ns, "A")
+      if answers:
+        print(f"Answer found rtype: {answers[0].rtype} rdata: {answers[0].rdata}")
+        if answers[0].rtype == QTYPE.A:
+          print(f"Found IP address {answers[0].rdata}")
+          return answers[0].rdata
+        elif answers[0].rtype == QTYPE.CNAME:
+          print(f"Found CNAME {answers[0].rdata}")
+          # Continue resolving the CNAME
+          
+      else:
+        print("No IP address found. Trying next name server...")
+    print("No IP address found. Trying next TLD...")
+  return NULL
+
+
+
+  MORE SEMI WORKING CODE:
+  def handle_domain(name):
+  domain = name.split(".")[-1].split("/")[0]
+
+  for root in ROOT_SERVERS:
+    print(f"Trying root server {root}...")
+    answers, name_servers, additional = get_dns_record(sock, domain, root, "NS")
+
+    if name_servers:
+         ip = resolve_ns(name, name_servers, additional, name)  # Continue resolving
+    
+    if ip:
+      print(f"IP address for {name} is {ip}")
+      return
+
+  print("All root servers failed. Unable to resolve.")
+      
+def query_a(name, ns):
+  answers, name_servers, additional = get_dns_record(sock, name, ns, "A")
+  if answers:
+    print(f"Answer found rtype: {answers[0].rtype} rdata: {answers[0].rdata}")
+    return answers[0]
+  else:
+    print("No IP address found. Try antother name server...")
+    return None
+
+def query_alias(name, ns):
+  answer = query_a(name, ns)
+  if answer.rtype == QTYPE.CNAME:
+    print(f"Found CNAME record, querying A record for {answer.rdata}...")
+    query_alias(str(answer.rdata), ns)
+  elif answer.rtype == QTYPE.A:
+    print(f"Found A record, returning IP address")
+    return answer
+  elif answer.rtype == QTYPE.NS:
+    print(f"Found NS record, retrying query for {name} on {answer.rdata}...")
+  
+def query_ns(name, domain, ns):
+  answers, name_servers, additional = get_dns_record(sock, name, ns, "NS")
+  for ns in name_servers:
+    print(f"Trying name server {ns} for domain {name}...")
+    answer = query_a(name, ns)
+    if answer.rtype == QTYPE.A:
+      return answer
+    elif answer.rtype == QTYPE.CNAME:
+      print(f"Found CNAME record, querying A record for alias {answer.rdata} on current name server...")
+      answer = query_alias(str(answer.rdata), ns)
+      if answer.rtype == QTYPE.A:
+        return answer
+      print("Error: alias didn't resolve to IP")
+    elif answer.rtype == QTYPE.NS:
+      print(f"Found NS record, querying A record for {name} from {answer.rdata}...")
+      answer = query_a(name, str(answer.rdata))
+    
+
+def resolve_ns(answers, name_servers, additional, name):
+  domain = name.split(".")[-1].split("/")[0]
+  """Iterative resolution through NS records"""
+  for ns in name_servers:
+    print(f"Trying TLD {ns}...")
+    answer = query_ns(name, domain, ns)
+    if answer:
+      return str(answer.rdata)
+    print("No IP address found. Trying next TLD...")
+  return NULL
+
+
+
+
+
+  ATTEMPT ??
+
+  def handle_url(name, domain):
+  if cache[name]:
+    print(f"IP address for {name} is {cache[name]}")
+    return
+  # Query root server:
+  if cache[domain]:
+    name_servers = get_name_servers(cache[domain], name, domain)
+  
+  tlds = get_tlds(name, domain)
+  cache[domain] = tlds
+  name_servers = get_name_servers(tlds, name, domain)
+  for ns in name_servers:
+    answer = query_name_server(name, ns, cache)
+    if answer.rtype == QTYPE.A:
+      # Query returned an A record, save it to the cache
+      cache[name] = answer.rdata
+      # IP has been found and should just be printed, function returns to stop additional querying
+      print(f"IP address for {name} is {answer.rdata}")
+      return
+    elif answer.rtype == QTYPE.NS:
+      # Query returned name server, query it instead to find the IP address
+      while answer.rtype == QTYPE.NS:
+        
+    elif answer.rtype == QTYPE.CNAME:
+      
+    print(f"Query for {name} did not return an A record, continuing...")
+
+def handle_alias(alias, domain, ns):
+  
+
+def get_tlds(name, domain):
+  domain = "." + domain
+  # Query root server for the TLD servers corresponding the the domain of the user input URL
+  for root in ROOT_SERVERS:
+    print(f"Querying root server {root} for {domain}")
+    answers, name_servers, additional = get_dns_record(sock, domain, root, "NS")
+    if error:
+      return
+    return name_servers    
+  
+def get_name_servers(name_servers, name, domain):
+  # Query TLD servers for the name server responsible for the url
+  for ns in name_servers:
+    print(f"Querying TLD server {ns} for {name}")
+    answers, name_servers, additional = get_dns_record(sock, name, ns, "NS")
+    if error:
+      return
+    return name_servers
+    
+
+def query_name_server(name, ns):
+  # Query the name server for the A record of the URL
+  print(f"Querying name server {ns} for {name}")
+  answers, name_servers, additional = get_dns_record(sock, name, ns, "A")
+  if error:
+    return
+  return answers[0]
