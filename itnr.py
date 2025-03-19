@@ -7,15 +7,13 @@ ROOT_SERVERS = ["198.41.0.4", "170.247.170.2", "192.33.4.12", "199.7.91.13", "19
 
 DNS_PORT = 53
 
-error = False
 cache = {}
 
 def resolve_url_to_ip(url):
   domain = url.split(".")[-1].split("/")[0]
   ip = check_cache(url, domain)
   cache["ip:"+url] = ip
-  print(f"IP address for {url} is {ip}")
-  #print("Cache:", cache)
+  print(f"IP address for {url} is {ip}\n")
 
 def check_cache(url, domain):
   url_parts = url.split(".")
@@ -42,30 +40,29 @@ def check_cache(url, domain):
     tlds = query_root(url, domain)
 
     if not tlds:
-      print("No results found")
+      print(f"No TLD servers found for domain {domain}")
       return
 
     name_servers = query_tld(subdomain, tlds)
 
     if not name_servers:
-      print("No results found")
+      print(f"No name servers found for {subdomain}")
       return
 
     ip = query_ns(url, name_servers, domain)
+    if not ip:
+      print(f"No IP address found for {url}")
     return ip
 
-# Query the root servers for the TLDs resposible for the domain
-  # and return the name servers for the TLDs
-  # If the TLD is not found, return an empty list
 def query_root(url, domain):
   tlds = []
   for root in ROOT_SERVERS:
     print(f"Querying root server {root} for {domain}")
-    answers, name_servers = get_dns_record(sock, domain, root, "NS")
-
-    for ns in name_servers:
-      if ns not in tlds:
-        tlds.append(ns)
+    answers, name_servers, additional = get_dns_record(sock, domain, root, "NS")
+    
+    for tld in name_servers:
+      if tld not in tlds and tld in additional:
+        tlds.append(additional[tld])
 
     if tlds:
       #print(f"Found {len(tlds)} TLDs for {domain}")
@@ -81,11 +78,7 @@ def query_tld(subdomain, tlds):
 
   for tld in tlds:
     print(f"Querying TLD {tld} for {subdomain}")
-    answers, name_servers = get_dns_record(sock, subdomain, tld, "NS")
-
-    for ns in name_servers:
-      if ns not in name_servers:
-        name_servers.append(ns)
+    answers, name_servers, additional = get_dns_record(sock, subdomain, tld, "NS")
     
     if name_servers:
       #print(f"Found {len(name_servers)} name servers for {subdomain}")
@@ -97,7 +90,7 @@ def query_tld(subdomain, tlds):
 def query_ns(url, name_servers, domain):
   for ns in name_servers:
     print(f"Querying name server {ns} for {url}")
-    answers, name_servers = get_dns_record(sock, url, ns, "A")
+    answers, name_servers, additional = get_dns_record(sock, url, ns, "A")
 
     for a in answers:
       if a.rtype == QTYPE.A:
@@ -106,7 +99,7 @@ def query_ns(url, name_servers, domain):
         return ip
       elif a.rtype == QTYPE.CNAME:
         alias = str(a.rdata)[:-1]
-        #print(f"Found alias for {url} from {ns}: {alias}")
+        print(f"Found alias: {alias}")
         alias_domain = alias.split(".")[-1].split("/")[0]
         return check_cache(alias, alias_domain)
     
@@ -126,46 +119,71 @@ def get_dns_record(udp_socket, domain:str, parent_server: str, record_type):
 
   answers = []
   name_servers = []
-  # additional = {}
+  additional = {}
   
-  header = DNSHeader.parse(buff)
-  #print("DNS header", repr(header))
-  if q.header.id != header.id:
-    print("Unmatched transaction")
-    return
-  if header.rcode != RCODE.NOERROR:
-    print("Query failed")
-    error = True
+  try:
+    header = DNSHeader.parse(buff)
+    #print("DNS header", repr(header))
+    if q.header.id != header.id:
+      print("Unmatched transaction")
+      return
+    if header.rcode != RCODE.NOERROR:
+      print("Query failed")
+      error = True
+      return [], [], []
+
+    # Parse the question section #2
+    for k in range(header.q):
+      q = DNSQuestion.parse(buff)
+      #print(f"Question-{k} {repr(q)}")
+
+    # Parse the answer section #3
+    for k in range(header.a):
+      a = RR.parse(buff)
+      #print(f"Answer-{k} {repr(a)}")
+      answers.append(a)
+      if a.rtype == QTYPE.A:
+        answers.append(a.rdata)
+
+    # Parse the authority section #4
+    for k in range(header.auth):
+      auth = RR.parse(buff)
+      #print(f"Authority-{k} {repr(auth)}")
+      if (auth.rtype == QTYPE.NS):
+        name_servers.append(str(auth.rdata))
+
+    # Parse the additional section #5
+    for k in range(header.ar):
+      adr = RR.parse(buff)
+      #print(f"Additional-{k} {repr(adr)} Name: {adr.rname}")
+      if (adr.rtype == QTYPE.A):
+        additional[str(adr.rname)] = str(adr.rdata)
+
+    return answers, name_servers, additional
+  except:
+    print(f"Timeout or error querying {parent_server}, try next server.")
     return [], [], []
 
-  # Parse the question section #2
-  for k in range(header.q):
-    q = DNSQuestion.parse(buff)
-    #print(f"Question-{k} {repr(q)}")
+def print_cache():
+  if cache:
+    print("Cache:")
+    for i in range(len(cache)):
+      key = list(cache.keys())[i]
+      print(f"{i+1}: {key}: {cache[key]}")
+  else:
+    print("Cache is empty.")
 
-  # Parse the answer section #3
-  for k in range(header.a):
-    a = RR.parse(buff)
-    #print(f"Answer-{k} {repr(a)}")
-    answers.append(a)
-    if a.rtype == QTYPE.A:
-      answers.append(a.rdata)
+def remove_cache_entry(i):
+  if i <= len(cache):
+    key = list(cache.keys())[i-1]
+    cache.pop(key)
+    print(f"Removed {key} from cache")
+  else:
+    print("Invalid index")
 
-  # Parse the authority section #4
-  for k in range(header.auth):
-    auth = RR.parse(buff)
-    #print(f"Authority-{k} {repr(auth)}")
-    if (auth.rtype == QTYPE.NS):
-      name_servers.append(str(auth.rdata))
-
-  # Parse the additional section #5
-  for k in range(header.ar):
-    adr = RR.parse(buff)
-    #print(f"Additional-{k} {repr(adr)} Name: {adr.rname}")
-    # if (adr.rtype == QTYPE.A):
-    #   additional[str(adr.rname)] = str(adr.rdata)
-
-  return answers, name_servers
+def clear_cache():
+  cache = {}
+  print("Cache cleared")
 
 while (True):
   # Create a UDP socket with 2-second timeout
@@ -173,12 +191,29 @@ while (True):
   sock.settimeout(2)
 
   # Get the domain name from the user
-  name = input("Enter a domain name or enter '.exit' to exit: ")
+  name = input("Enter a domain name or command: ")
 
-  if (name == ".exit"):
-    break
+  if name[0] == ".":
+    match name.split():
+      case [".exit"]:
+        break
+      case [".list"]:
+        print_cache()
+        continue
+      case ".clear":
+        clear_cache()
+        continue
+      case [".remove", i]:
+        try:
+          i = int(i)
+        except:
+          print("Invalid index")
+        remove_cache_entry(i)
+        continue
+      case _:
+        print("Invalid Command")
+        continue
   
-  # Query the root server for the NS record of the domain
   resolve_url_to_ip(name)
 
 sock.close()
